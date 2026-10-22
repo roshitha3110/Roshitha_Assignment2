@@ -1,112 +1,74 @@
-# End-to-End Product Search and Cart Validation
 
+import os
 import pytest
 from playwright.async_api import async_playwright, expect
 
 
 @pytest.mark.asyncio
-async def test_product_search():
+async def test_global_authentication():
+
+    state_file = "auth_state.json"
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False,
             executable_path="/usr/bin/google-chrome",
-            slow_mo=1000
+            slow_mo=500
         )
 
-        page = await browser.new_page()
-        page.set_default_timeout(15000)
-
         try:
-            # 1. Open Amazon
-            await page.goto("https://www.amazon.in/")
+            # Step 1: Open SauceDemo and log in
+            context = await browser.new_context()
+            page = await context.new_page()
 
-            # 2. Search for books
-            await page.locator(
-                "//input[@id='twotabsearchtextbox']"
-            ).fill("books")
-
-            await page.locator(
-                "//*[@id='nav-search-submit-button']"
-            ).click()
-
-            # 3. Get all product titles
-            titles = page.locator(
-                '//div[@data-cy="title-recipe"]//h2/span'
+            await page.goto(
+                "https://www.saucedemo.com/",
+                wait_until="domcontentloaded"
             )
 
-            await page.wait_for_load_state("domcontentloaded")
-            await titles.first.wait_for(
-                state="visible", timeout=15000
+            await page.locator("#user-name").fill("standard_user")
+            await page.locator("#password").fill("secret_sauce")
+            await page.locator("#login-button").click()
+
+            # Step 2: Verify successful login
+            await expect(page.locator(".title")).to_have_text("Products")
+            print("PASS: Login successful.")
+
+            # Step 3: Save authenticated browser state
+            await context.storage_state(path=state_file)
+            print("PASS: Browser state saved.")
+
+            # Step 4: Create a new context using saved state
+            new_context = await browser.new_context(
+                storage_state=state_file
+            )
+            new_page = await new_context.new_page()
+
+            # Step 5: Open SauceDemo with the saved state
+            await new_page.goto(
+                "https://www.saucedemo.com/",
+                wait_until="domcontentloaded"
             )
 
-            print("Product search results displayed.")
+            # Step 6: Check whether authentication persists
+            products = new_page.locator(".title")
+            login_button = new_page.locator("#login-button")
 
-            # 4. Select the first product title
-            product_title = (await titles.first.inner_text()).strip()
-            print("Selected product:", product_title)
-
-            # Find the link for the selected product
-            title_link = page.locator(
-                '//div[@data-cy="title-recipe"]//h2'
-            ).first.locator("xpath=ancestor::a")
-
-            # 5. Open the product page
-            async with page.context.expect_page(timeout=5000) as new_page:
-                try:
-                    await title_link.click()
-                except Exception:
-                    pass
-
-            try:
-                product_page = await new_page.value
-            except Exception:
-                product_page = page
-
-            await product_page.wait_for_load_state("domcontentloaded")
-
-            # 6. Validate product title
-            detail_title = product_page.locator("#productTitle")
-            await expect(detail_title).to_be_visible(timeout=15000)
-
-            print(
-                "Product details:",
-                (await detail_title.inner_text()).strip()
-            )
-
-            # 7. Check Add to Cart availability
-            add_to_cart = product_page.locator("#add-to-cart-button")
-
-            if (
-                await add_to_cart.is_visible()
-                and await add_to_cart.is_enabled()
-            ):
-                # Get cart count before adding
-                cart_count = product_page.locator("#nav-cart-count")
-                before_text = await cart_count.inner_text()
-                before_count = int(before_text.strip() or "0")
-
-                # 8. Add product to cart
-                await add_to_cart.click()
-                print("Add to Cart clicked.")
-
-                # 9. Verify cart count increased
-                await expect(cart_count).not_to_have_text(
-                    str(before_count), timeout=15000
-                )
-
-                after_count = await cart_count.inner_text()
-                print("Cart count before:", before_count)
-                print("Cart count after:", after_count)
-                print("Cart verification completed.")
-
+            if await products.is_visible():
+                print("PASS: Authenticated session restored.")
+            elif await login_button.is_visible():
+                print("Session expired. Re-authentication is needed.")
             else:
-                print(
-                    "Add to Cart is unavailable. "
-                    "Skipping cart validation."
-                )
+                print("Unable to determine authentication status.")
 
-            # Do not proceed to checkout or payment.
+            await new_context.close()
+            await context.close()
 
         finally:
             await browser.close()
+
+    # Step 7: Remove the sensitive state file after testing
+    if os.path.exists(state_file):
+        os.remove(state_file)
+        print("Temporary authentication state file deleted.")
 
