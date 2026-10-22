@@ -1,71 +1,41 @@
-
-#Home Page Validations (Soft Assertions)
-
+import pytest
 from playwright.async_api import async_playwright
 
 
-async def test_home_page():
+@pytest.mark.asyncio
+async def test_product_discovery():
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, executable_path="/usr/bin/google-chrome",slow_mo=10000)
-
+        browser = await p.chromium.launch(
+            headless=False,
+            executable_path="/usr/bin/google-chrome",
+            slow_mo=1000,
+        )
         page = await browser.new_page()
-        await page.goto("https://www.amazon.in/")
 
-        failures = []
+        await page.goto("https://www.amazon.in/", wait_until="domcontentloaded")
 
-        # 1. Page title
-        try:
-            assert "Amazon" in await page.title()
-            print("PASS: Page title validated")
-        except AssertionError:
-            print("FAIL: Page title validation failed")
-            failures.append("Page title")
+        keyword = "Atomic Habits"
+        await page.locator("#twotabsearchtextbox").fill(keyword)
+        await page.locator("#nav-search-submit-button").click()
 
-        # 2. Amazon logo
-        try:
+        # Each result title is a link wrapping an h2
+        titles = page.locator('div[data-cy="title-recipe"] a:has(h2)')
+        await titles.first.wait_for(timeout=30000)
 
-            assert await page.locator("//*[@id='nav-logo-sprites']").is_visible()
-            print("PASS: Amazon logo is visible")
-        except AssertionError:
-            print("FAIL: Amazon logo is not visible")
-            failures.append("Amazon logo")
+        product_title = "Atomic Habits"
+        found = False
 
-        # 3. Search textbox
-        try:
-            assert await page.locator("//input[@id='twotabsearchtextbox']").is_visible()
-            print("PASS: Search textbox is visible")
-        except AssertionError:
-            print("FAIL: Search textbox is not visible")
-            failures.append("Search textbox")
+        for i in range(await titles.count()):
+            link = titles.nth(i)
+            text = (await link.locator("h2").inner_text()).strip()
+            print("Available Product:", text)
 
-        # 4. Search button
-        try:
-            assert await page.locator("//*[@id='nav-search-submit-button']").is_visible()
-            print("PASS: Search button is visible")
-        except AssertionError:
-            print("FAIL: Search button is not visible")
-            failures.append("Search button")
+            if product_title.lower() in text.lower():
+                print("Selected Product:", text)
+                await link.click()
+                found = True
+                break
 
-        # 5. Navigation item
-        try:
-            assert await page.get_by_role("link", name="Today's Deals").is_visible()
-            print("PASS: Navigation item is visible")
-        except AssertionError:
-            print("FAIL: Navigation item is not visible")
-            failures.append("Navigation item")
-
-        # Final result
-        print("\\n========== FINAL RESULT ==========")
-
-        if failures:
-            print("FAILED: Some validations did not pass.")
-            print("Failed validations:", ", ".join(failures))
-            await page.screenshot(path="failure.png",full_page=True)
-            print("Screenshot saved as failure.png")
-        else:
-            print("SUCCESS: All 5 validations passed!")
-
-        print("==================================")
+        assert found, f"'{product_title}' not found in search results"
 
         await browser.close()
-
