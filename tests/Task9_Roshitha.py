@@ -1,58 +1,58 @@
-#Robust Locator Challenge
+
 import pytest
 from playwright.async_api import async_playwright, expect
 
 
 @pytest.mark.asyncio
-async def test_robust_product_locator():
+async def test_product_availability():
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False,
             executable_path="/usr/bin/google-chrome",
-            slow_mo=1000,
+            slow_mo=500
         )
-        # Create context to track multi-page navigation cleanly
-        context = await browser.new_context()
-        page = await context.new_page()
+
+        page = await browser.new_page()
 
         try:
+            # Open Amazon India
             await page.goto("https://www.amazon.in/")
 
-            product_name = "Atomic Habits"
-            await page.locator("//input[@id='twotabsearchtextbox']").fill("Atomic Habits")
-            await page.locator("//*[@id='nav-search-submit-button']").click()
+            # Search for a product
+            search_box = page.locator("#twotabsearchtextbox")
+            await search_box.fill("headphones")
+            await search_box.press("Enter")
 
-
-            cards = page.locator("div[data-component-type='s-search-result']")
-
-            matching_cards = (
-                cards
-                .filter(has=page.locator("h2", has_text=product_name))
-                .filter(has_not=page.locator("[aria-label*='Sponsored']"))
-                .filter(has_not_text="Sponsored")
+            # Wait for search results
+            products = page.locator(
+                'div[data-component-type="s-search-result"]'
             )
-            await expect(matching_cards.first).to_be_visible(timeout=15000)
+            await expect(products.first).to_be_visible()
 
-            product_card = matching_cards.first
+            # Select the first product
+            await products.first.click()
+            await page.wait_for_load_state("domcontentloaded")
 
-            # Assert the title
-            product_title = product_card.locator("h2").first
-            await expect(product_title).to_contain_text(product_name)
+            # Check Add to Cart button
+            add_to_cart = page.locator("#add-to-cart-button")
 
-            product_link = product_card.locator("a[href*='/dp/']").first
-            await expect(product_link).to_be_visible(timeout=15000)
+            if await add_to_cart.count() > 0 and await add_to_cart.is_visible() and await add_to_cart.is_enabled():
 
-            # Catch the new tab when clicking
-            async with page.expect_popup() as popup_info:
-                await product_link.click()
+                print("Product appears available")
 
-            detail_page = await popup_info.value
-            await detail_page.wait_for_load_state()
+                await add_to_cart.click()
+                print("PASS: Add to Cart clicked")
 
-            # Verify title on the new page
-            await expect(detail_page.locator("#productTitle")).to_contain_text(
-                "Atomic Habits", timeout=15000
-            )
+                # Validate cart
+                await page.goto("https://www.amazon.in/gp/cart/view.html")
+
+                await expect(page.locator("#sc-active-cart")).to_be_visible()
+                print("PASS: Cart page opened")
+
+            else:
+                print("Product unavailable: Add to Cart button missing or disabled")
+                print("SKIPPED: Cart validation")
 
         finally:
             await browser.close()
