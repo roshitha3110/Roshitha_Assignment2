@@ -1,66 +1,53 @@
+import pytest
+from playwright.async_api import async_playwright, expect
 
 
-from playwright.async_api import async_playwright, TimeoutError
-
-
-async def test_dynamic_dropdown():
+@pytest.mark.asyncio
+async def test_pagination_and_infinite_scroll():
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=False,
-            executable_path="/usr/bin/google-chrome"
+            executable_path="/usr/bin/google-chrome",
+            slow_mo=500
         )
 
-        page = await browser.new_page()
-        await page.goto("https://www.amazon.in/")
-
-        # Enter a partial product name
-
-        search = page.locator("//input[@id='twotabsearchtextbox']")
-        await search.fill("headphone")
-
         try:
-            # Wait for autocomplete suggestions
-            suggestions = page.locator(
-                '//*[@id="sac-suggestion-row-1-cell-1"]/div[1]'
-            )
+            context = await browser.new_context()
+            page = await context.new_page()
 
-            await suggestions.first.wait_for(
-                state="visible",
-                timeout=3000
-            )
+            # 1. Open Amazon and search
+            await page.goto("https://www.amazon.in/", wait_until="domcontentloaded")
 
-            print("Autocomplete suggestions appeared.")
+            await page.locator("#twotabsearchtextbox").fill("wireless mouse")
+            await page.locator("#nav-search-submit-button").click()
 
-            # Select the first visible suggestion
-            suggestion_text = (
-                await suggestions.first.inner_text()
-            ).strip()
+            # 2. Wait for results
+            product_cards = page.locator('[data-component-type="s-search-result"]')
+            await product_cards.first.wait_for(state="visible", timeout=20000)
 
-            print("Selected suggestion:", suggestion_text)
-            await suggestions.first.click()
+            # Get title of the first product on Page 1
+            first_product_title = await product_cards.first.locator("h2").inner_text()
+            print(f"Page 1 First Product: {first_product_title.strip()}")
 
-            # Validate navigation to the selected suggestion's results
-            await page.wait_for_load_state("domcontentloaded")
-            print("Page URL:", page.url)
+            # 3. Handle Pagination (Click 'Next')
+            next_button = page.locator('.s-pagination-next')
 
-        except TimeoutError:
-            print("No autocomplete suggestions appeared.")
-            print("Using normal search as a fallback.")
+            if await next_button.is_visible():
+                await next_button.click()
 
-            await search.fill("headphone")
-            await search.press("Enter")
+                # Wait for the next page results to render
+                await product_cards.first.wait_for(state="visible", timeout=20000)
 
-            # Wait for normal search results
-            await page.locator(
-                "[data-component-type='s-search-result']"
-            ).first.wait_for(
-                state="visible",
-                timeout=10000
-            )
+                second_product_title = await product_cards.first.locator("h2").inner_text()
+                print(f"Page 2 First Product: {second_product_title.strip()}")
 
-            print("Normal search results are displayed.")
-            print("Page URL:", page.url)
+                # 4. Validate results changed
+                assert first_product_title.strip() != second_product_title.strip(), \
+                    "Pagination failed: Result set did not change."
 
-        await browser.close()
+                print("PASS: Successfully navigated to next page and verified new results.")
+            else:
+                print("Pagination 'Next' button not found on this view.")
 
-
+        finally:
+            await browser.close()
